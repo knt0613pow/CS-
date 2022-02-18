@@ -27,21 +27,44 @@ def affine_relu_backward(dout, cache):
     return dx, dw, db
 
 # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-def affine_bn_relu_forward(x, w, b, gamma, beta, bn_param):
-    out1, fc_cache = affine_forward(x, w, b)
-    out2, bn_cache = batchnorm_forward(out1, gamma, beta, bn_param)
-    out3, relu_cache = relu_forward(out2)
-    cache = (fc_cache, bn_cache, relu_cache)
+def unified_forward(x, w, b, gamma = None, beta = None, bn_param = None, dropout_param = None, last = False):
     
-    return out3, cache
+    bn_cache, ln_cache, relu_cache, dropout_cache = None, None, None, None
+    out, fc_cache = affine_forward(x, w, b)
+    if not last:
+        if bn_param is not None:
+            if 'mode' in bn_param:
+                out, bn_cache = batchnorm_forward(out, gamma, beta, bn_param)
+            else:
+                out, ln_cache = layernorm_forward(out, gamma, beta, bn_param)
 
-def affine_bn_relu_backward(dout, cache):
-    fc_cache, bn_cache, relu_cache = cache
-    dout1 = relu_backward(dout, relu_cache)
-    dout2, dgamma, dbeta = batchnorm_backward_alt(dout1, bn_cache)
-    dout3, dw, db = affine_backward(dout2, fc_cache)
-    return dout3, dw, db, 
+        out, relu_cache = relu_forward(out) 
 
+        if dropout_param is not None:
+            out, dropout_cache = dropout_forward(out, dropout_param)
+    
+    cache = fc_cache, bn_cache, ln_cache, relu_cache, dropout_cache
+
+    return out, cache
+
+def unified_backward(dout, cache):
+    dgamma, dbeta = None, None
+    fc_cache, bn_cache, ln_cache, relu_cache, dropout_cache = cache
+
+    if dropout_cache is not None:
+        dout = dropout_backward(dout, dropout_cache)
+    
+    if relu_cache is not None:
+        dout = relu_backward(dout, relu_cache)
+
+    if bn_cache is not None:
+        dout, dgamma, dbeta = batchnorm_backward_alt(dout, bn_cache)
+    elif ln_cache is not None:
+        dout, dgamma, dbeta = layernorm_backward(dout, ln_cache)
+    
+    dx, dw, db = affine_backward(dout, fc_cache)
+
+    return dx, dw, db, dgamma, dbeta
 
 
 # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****

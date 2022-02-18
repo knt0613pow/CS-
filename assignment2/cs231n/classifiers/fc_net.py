@@ -74,11 +74,15 @@ class FullyConnectedNet(object):
         ############################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         
-        layers_dims = np.hstack([input_dim, hidden_dims, num_classes])
-        for i in range(self.num_layers):
-            self.params['W'+str(i+1)] = weight_scale*np.random.randn(layers_dims[i], layers_dims[i+1])
-            self.params['b'+str(i+1)] = np.zeros(layers_dims[i+1])
-            
+        for l, (i, j) in enumerate(zip([input_dim, *hidden_dims], [*hidden_dims, num_classes])):
+            self.params[f'W{l+1}'] = np.random.randn(i, j) * weight_scale
+            self.params[f'b{l+1}'] = np.zeros(j)
+
+            if self.normalization and l < self.num_layers-1:
+                self.params[f'gamma{l+1}'] = np.ones(j)
+                self.params[f'beta{l+1}'] = np.zeros(j)
+    
+
 
 
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
@@ -86,9 +90,8 @@ class FullyConnectedNet(object):
         #                             END OF YOUR CODE                             #
         ############################################################################
 
-        # When using dropout we need to pass a dropout_param dictionary to each
-        # dropout layer so that the layer knows the dropout probability and the mode
-        # (train / test). You can pass the same dropout_param to each dropout layer.
+
+        #######################_param to each dropout layer.
         self.dropout_param = {}
         if self.use_dropout:
             self.dropout_param = {"mode": "train", "p": dropout_keep_ratio}
@@ -130,6 +133,7 @@ class FullyConnectedNet(object):
         """
         X = X.astype(self.dtype)
         mode = "test" if y is None else "train"
+        # print("mode:", mode)
 
         # Set train/test mode for batchnorm params and dropout param since they
         # behave differently during training and testing.
@@ -153,18 +157,18 @@ class FullyConnectedNet(object):
         ############################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         
-        x = X
-        caches = []
-        for i in range(self.num_layers -1):
-            W = self.params['W'+str(i+1)]
-            b = self.params['b'+str(i+1)]
-            out, cache = affine_relu_forward(x, W, b)
-            caches.append(cache)
-            x= out
-        W = self.params['W'+str(self.num_layers)]
-        b = self.params['b'+str(self.num_layers)]
-        scores,cache = affine_forward(x, W ,b)
-        caches.append(cache)
+        cache = {}
+        
+        for l in range(self.num_layers):
+            keys = [f'W{l+1}', f'b{l+1}', f'gamma{l+1}', f'beta{l+1}']   # list of params
+            w, b, gamma, beta = (self.params.get(k, None) for k in keys) # get param vals
+
+            bn = self.bn_params[l] if gamma is not None else None  # bn params if exist
+            do = self.dropout_param if self.use_dropout else None  # do params if exist
+
+            X, cache[l] = unified_forward(X, w, b, gamma, beta, bn, do, l==self.num_layers-1) # generic forward pass
+
+        scores = X
 
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         ############################################################################
@@ -191,22 +195,18 @@ class FullyConnectedNet(object):
         ############################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         
-        loss, dout = softmax_loss(scores,y)
-        for i in range(self.num_layers):
-            W = self.params['W'+(str(i+1))]
-            loss += 0.5*self.reg*np.sum(W*W)
-            
-        dout, dw, db = affine_backward(dout, caches[self.num_layers-1])
-        dw += self.reg * self.params['W'+str(self.num_layers)]
-        grads['W'+str(self.num_layers)] = dw
-        grads['b'+str(self.num_layers)] = db
-        
-        for i in range(self.num_layers -2, -1, -1):
-            dx, dw, db = affine_relu_backward(dout, caches[i])
-            dw += self.reg * self.params['W'+str(i+1)]
-            grads['W'+str(i+1)] = dw
-            grads['b'+str(i+1)] = db
-            dout = dx
+        loss, dout = softmax_loss(scores, y)
+        loss += 0.5 * self.reg * np.sum([np.sum(W**2) for k, W in self.params.items() if 'W' in k])
+
+        for l in reversed(range(self.num_layers)):
+            dout, dW, db, dgamma, dbeta = unified_backward(dout, cache[l])
+
+            grads[f'W{l+1}'] = dW + self.reg * self.params[f'W{l+1}']
+            grads[f'b{l+1}'] = db
+
+            if dgamma is not None and l < self.num_layers-1:
+                grads[f'gamma{l+1}'] = dgamma
+                grads[f'beta{l+1}'] = dbeta
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         ############################################################################
         #                             END OF YOUR CODE                             #
